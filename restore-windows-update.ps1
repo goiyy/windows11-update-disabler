@@ -1,30 +1,9 @@
 ﻿#Requires -RunAsAdministrator
 
 $backupDir = "$env:ProgramData\ScriptBackup\WaaSMedicBackup"
-$aclAlertFile = "$env:ProgramData\ScriptBackup\WaaSMedic_ACL_ALERT"
 
 $isZh = (Get-Culture).TwoLetterISOLanguageName -eq "zh"
 function T($zh, $en) { if ($isZh) { $zh } else { $en } }
-
-if (Test-Path $aclAlertFile) {
-    $waasKey4Check = "HKLM:\SYSTEM\CurrentControlSet\Services\WaaSMedicSvc"
-    $aclAlertReal = $false
-    try {
-        $curAcl = Get-Acl $waasKey4Check -ErrorAction Stop
-        $aclBk4Check = "$backupDir\WaaSMedicSvc_ACL.xml"
-        if (Test-Path $aclBk4Check) {
-            $expectedSddl = [System.IO.File]::ReadAllText($aclBk4Check)
-            if ($curAcl.GetSecurityDescriptorSddlForm() -ne $expectedSddl) { $aclAlertReal = $true }
-        } else { $aclAlertReal = $true }
-    } catch { $aclAlertReal = $true }
-    if ($aclAlertReal) {
-        Write-Host ""
-        Write-Host "  [ALERT] $(T "WaaSMedicSvc 注册表 ACL 可能异常！" "WaaSMedicSvc registry ACL may be incorrect!")" -ForegroundColor Red
-        Write-Host "  [ALERT] $(T "请手动检查" "Please check manually"): $waasKey4Check" -ForegroundColor Red
-        Write-Host ""
-    }
-    Remove-Item $aclAlertFile -Force -ErrorAction SilentlyContinue
-}
 
 $host.UI.RawUI.WindowTitle = (T "Windows Update 恢复工具" "Windows Update Restorer")
 
@@ -43,36 +22,47 @@ if ($confirm -ne 'Y' -and $confirm -ne 'y') {
 }
 
 Write-Host ""
-Write-Host "===== [1/6] $(T "移除开机守护任务" "Remove Boot Guard Task") =====" -ForegroundColor Green
+Write-Host "===== [1/5] $(T "恢复 DLL 文件" "Restore DLL Files") =====" -ForegroundColor Green
 
-$taskName = "DisableWindowsUpdateGuard"
-$guardFile = "$backupDir\disable-windows-update.ps1"
-$markerFile = "$backupDir\guard.enabled"
+$waasDllBak = "$env:SystemRoot\System32\WaaSMedicSvc.dll.bak"
+$waasDllPath = "$env:SystemRoot\System32\WaaSMedicSvc.dll"
 
-try {
-    $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-    if ($task) {
-        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction Stop
-        Write-Host "  [OK] $(T "守护任务已移除" "Guard task removed")" -ForegroundColor Green
-    } else {
-        Write-Host "  [SKIP] $(T "守护任务不存在" "Guard task not found")" -ForegroundColor DarkGray
+if (Test-Path $waasDllBak) {
+    try {
+        takeown.exe /f $waasDllBak /a > $null 2>&1
+        icacls.exe $waasDllBak /grant "Administrators:F" > $null 2>&1
+        Rename-Item -Path $waasDllBak -NewName "WaaSMedicSvc.dll" -Force -ErrorAction Stop
+        Write-Host "  [OK] WaaSMedicSvc.dll $(T "已恢复" "restored")" -ForegroundColor Green
+    } catch {
+        Write-Host "  [FAIL] $(T "恢复 WaaSMedicSvc.dll 失败" "Failed to restore WaaSMedicSvc.dll"): $_" -ForegroundColor Red
+        Write-Host "  [HINT] $(T "可能需要使用 PsExec -s 以 SYSTEM 权限运行此脚本" "May need to run this script with SYSTEM privileges via PsExec -s")" -ForegroundColor DarkYellow
     }
-} catch {
-    Write-Host "  [FAIL] $(T "移除守护任务失败" "Guard task removal failed"): $_" -ForegroundColor Red
+} elseif (Test-Path $waasDllPath) {
+    Write-Host "  [SKIP] WaaSMedicSvc.dll $(T "已存在，无需恢复" "already exists, no restore needed")" -ForegroundColor DarkGray
+} else {
+    Write-Host "  [SKIP] WaaSMedicSvc.dll $(T "备份不存在" "backup not found")" -ForegroundColor DarkGray
 }
 
-if (Test-Path $markerFile) {
-    Remove-Item -Path $markerFile -Force -ErrorAction SilentlyContinue
-    Write-Host "  [OK] $(T "守护标记已移除" "Guard marker removed")" -ForegroundColor Green
-}
+$wuauDllBak = "$env:SystemRoot\System32\wuaueng.dll.bak"
+$wuauDllPath = "$env:SystemRoot\System32\wuaueng.dll"
 
-if (Test-Path $guardFile) {
-    Remove-Item -Path $guardFile -Force -ErrorAction SilentlyContinue
-    Write-Host "  [OK] $(T "守护脚本已删除" "Guard script deleted")" -ForegroundColor Green
+if (Test-Path $wuauDllBak) {
+    try {
+        takeown.exe /f $wuauDllBak /a > $null 2>&1
+        icacls.exe $wuauDllBak /grant "Administrators:F" > $null 2>&1
+        Rename-Item -Path $wuauDllBak -NewName "wuaueng.dll" -Force -ErrorAction Stop
+        Write-Host "  [OK] wuaueng.dll $(T "已恢复" "restored")" -ForegroundColor Green
+    } catch {
+        Write-Host "  [FAIL] $(T "恢复 wuaueng.dll 失败" "Failed to restore wuaueng.dll"): $_" -ForegroundColor Red
+        Write-Host "  [HINT] $(T "可能需要使用 PsExec -s 以 SYSTEM 权限运行此脚本" "May need to run this script with SYSTEM privileges via PsExec -s")" -ForegroundColor DarkYellow
+    }
+} elseif (Test-Path $wuauDllPath) {
+    Write-Host "  [SKIP] wuaueng.dll $(T "已存在，无需恢复" "already exists, no restore needed")" -ForegroundColor DarkGray
+} else {
+    Write-Host "  [SKIP] wuaueng.dll $(T "备份不存在" "backup not found")" -ForegroundColor DarkGray
 }
-
 Write-Host ""
-Write-Host "===== [2/6] $(T "恢复 Windows Update 服务" "Restore Windows Update Services") =====" -ForegroundColor Green
+Write-Host "===== [2/5] $(T "恢复 Windows Update 服务" "Restore Windows Update Services") =====" -ForegroundColor Green
 
 $serviceName = "wuauserv"
 try {
@@ -130,7 +120,6 @@ try {
         Set-Acl -Path $waasSvcKey -AclObject $tempAcl -ErrorAction Stop
 
         try {
-
             $failureActionsPath = "$backupDir\WaaSMedicSvc_FailureActions.bin"
             if (Test-Path $failureActionsPath) {
                 try {
@@ -173,7 +162,6 @@ try {
                 }
                 if (-not $aclRestored) {
                     Write-Host "  [WARN] $(T "恢复 ACL 失败，请手动检查注册表权限" "ACL restore failed, check registry permissions manually"): $waasSvcKey" -ForegroundColor DarkYellow
-                    try { [System.IO.File]::WriteAllText($aclAlertFile, (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), [System.Text.UTF8Encoding]::new($false)) } catch {}
                 }
             }
         }
@@ -186,9 +174,8 @@ try {
 
 Write-Host "  [INFO] WaaSMedicSvc $(T "受 LaunchProtected=2 保护，SCM 缓存启动时值，Set-Service 无法修改" "protected by LaunchProtected=2, SCM caches at boot, Set-Service cannot modify")" -ForegroundColor DarkCyan
 Write-Host "  [INFO] $(T "注册表已设 Start=3，重启后 SCM 重读注册表生效" "Registry set Start=3, takes effect after reboot when SCM re-reads registry")" -ForegroundColor DarkCyan
-
 Write-Host ""
-Write-Host "===== [3/6] $(T "恢复注册表自动更新设置" "Restore Registry Auto Update Settings") =====" -ForegroundColor Green
+Write-Host "===== [3/5] $(T "恢复注册表自动更新设置" "Restore Registry Auto Update Settings") =====" -ForegroundColor Green
 
 $wuKeyPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"
 $auKeyPath = "$wuKeyPath\AU"
@@ -208,7 +195,7 @@ try {
 }
 
 Write-Host ""
-Write-Host "===== [4/6] $(T "恢复 Windows Update 相关任务计划" "Restore Windows Update Scheduled Tasks") =====" -ForegroundColor Green
+Write-Host "===== [4/5] $(T "恢复 Windows Update 相关任务计划" "Restore Windows Update Scheduled Tasks") =====" -ForegroundColor Green
 
 $taskFolders = @(
     "$env:SystemRoot\System32\Tasks\Microsoft\Windows\WindowsUpdate",
@@ -238,7 +225,7 @@ foreach ($folder in $taskFolders) {
             $originalName = $bak.Name -replace '\.bak$', ''
             $originalPath = Join-Path $folder $originalName
             if (Test-Path $originalPath) {
-                Write-Host "  [SKIP] Task file exists: $originalName ($(T "无需恢复" "no restore needed")" -ForegroundColor DarkGray
+                Write-Host "  [SKIP] Task file exists: $originalName ($(T "无需恢复" "no restore needed"))" -ForegroundColor DarkGray
                 continue
             }
             Rename-Item -Path $bak.FullName -NewName $originalName -Force -ErrorAction Stop
@@ -271,7 +258,6 @@ foreach ($folder in $taskFolders) {
             if (Test-Path $backupFile) {
                 try {
                     $taskXml = Get-Content $backupFile -Raw -Encoding UTF8
-
                     Register-ScheduledTask -Xml $taskXml -TaskName $t.TaskName -TaskPath $t.TaskPath -Force -ErrorAction Stop | Out-Null
                     Write-Host "  [OK] $(T "已重新注册" "Re-registered"): $($t.TaskName)" -ForegroundColor Green
                     $registered = $true
@@ -285,9 +271,8 @@ foreach ($folder in $taskFolders) {
         }
     }
 }
-
 Write-Host ""
-Write-Host "===== [5/6] $(T "恢复自动驱动更新" "Restore Auto Driver Update") =====" -ForegroundColor Green
+Write-Host "===== [5/5] $(T "恢复自动驱动更新 + WaaSMedic 策略" "Restore Auto Driver Update + WaaSMedic Policy") =====" -ForegroundColor Green
 
 $driverKeyPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DriverSearching"
 try {
@@ -298,9 +283,6 @@ try {
 } catch {
     Write-Host "  [FAIL] $(T "驱动更新恢复失败" "Driver update restore failed"): $_" -ForegroundColor Red
 }
-
-Write-Host ""
-Write-Host "===== [6/6] $(T "恢复 WaaSMedic 服务" "Restore WaaSMedic Service") =====" -ForegroundColor Green
 
 $waasKeyPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WaaSMedic"
 try {
@@ -324,6 +306,12 @@ if ($svc) {
     Write-Host "  Windows Update $(T "启动类型" "start type"): $($svc.StartType)" -ForegroundColor $(if ($svc.StartType -eq 'Manual') {'Green'} else {'Yellow'})
 }
 
+$waasDllStatus = if (Test-Path "$env:SystemRoot\System32\WaaSMedicSvc.dll") { "WaaSMedicSvc.dll $(T "已恢复" "restored")" } elseif (Test-Path "$env:SystemRoot\System32\WaaSMedicSvc.dll.bak") { "WaaSMedicSvc.dll $(T "仍为备份" "still backed up")" } else { "WaaSMedicSvc.dll $(T "不存在" "not found")" }
+Write-Host "  DLL: $waasDllStatus" -ForegroundColor $(if (Test-Path "$env:SystemRoot\System32\WaaSMedicSvc.dll") {'Green'} else {'Yellow'})
+
+$wuauDllStatus = if (Test-Path "$env:SystemRoot\System32\wuaueng.dll") { "wuaueng.dll $(T "已恢复" "restored")" } elseif (Test-Path "$env:SystemRoot\System32\wuaueng.dll.bak") { "wuaueng.dll $(T "仍为备份" "still backed up")" } else { "wuaueng.dll $(T "不存在" "not found")" }
+Write-Host "  DLL: $wuauDllStatus" -ForegroundColor $(if (Test-Path "$env:SystemRoot\System32\wuaueng.dll") {'Green'} else {'Yellow'})
+
 if (Test-Path $backupDir) {
     Write-Host ""
     $cleanConfirm = Read-Host (T "是否清理备份目录? (输入 Y 清理, 其他键保留)" "Clean up backup directory? (Y to clean, any other key to keep)")
@@ -337,5 +325,7 @@ if (Test-Path $backupDir) {
     }
 }
 
+Write-Host ""
+Write-Host (T "[提示] 建议重启计算机以使所有更改生效" "[Tip] Reboot is recommended for all changes to take effect") -ForegroundColor Yellow
 Write-Host ""
 Read-Host (T "按回车键退出" "Press Enter to exit")
